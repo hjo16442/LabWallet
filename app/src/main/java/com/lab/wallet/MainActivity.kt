@@ -93,6 +93,7 @@ class MainActivity : Activity() {
         root.addView(withdrawalAmount)
         checkButton = button("شروع بررسی موجودی و شبکه") { checkAddress() }; root.addView(checkButton)
         root.addView(button("شناسایی خودکار توکن در شبکه‌های EVM") { autoIdentifyEvmToken() })
+        root.addView(button("شبیه‌سازی امن انتقال توکن (بدون ارسال)") { simulateEvmTokenTransfer() })
         root.addView(button("بررسی آمادگی برداشت و راه‌حل خطا") { diagnoseWithdrawal() })
         root.addView(button("باز کردن مستقیم Trust Wallet") { openTrustWallet() })
         root.addView(heading("گزارش بررسی"))
@@ -192,6 +193,57 @@ class MainActivity : Activity() {
             if (matches == 0) report.append("\n\nدر شبکه‌های بررسی‌شده موجودی مثبت تأیید نشد. این نتیجه ثابت نمی‌کند دارایی وجود ندارد؛ ممکن است شبکه دیگری باشد یا API/قرارداد پاسخ استاندارد ندهد.")
             report.append("\n\nاین بررسی فقط‌خواندنی است و انتقال‌پذیری، نقدشوندگی یا نبود محدودیت قرارداد را تضمین نمی‌کند.")
             runOnUiThread { result.text = report.toString(); checkButton.isEnabled = true }
+        }
+    }
+    private fun simulateEvmTokenTransfer() {
+        val index = network.selectedItemPosition
+        val wallet = address.text.toString().trim()
+        val contract = tokenContract.text.toString().trim()
+        val destination = destinationAddress.text.toString().trim()
+        val amountText = withdrawalAmount.text.toString().trim()
+        if (index !in 2..8 && index != 11) { result.text = "شبیه‌سازی فعلاً فقط برای شبکه‌های EVM است."; return }
+        if (!wallet.matches(Regex("^0x[0-9a-fA-F]{40}$")) || !destination.matches(Regex("^0x[0-9a-fA-F]{40}$")) || !contract.matches(Regex("^0x[0-9a-fA-F]{40}$"))) { result.text = "آدرس عمومی مبدأ، مقصد و قرارداد معتبر EVM را وارد کن."; return }
+        val amount = amountText.toBigDecimalOrNull()
+        if (amount == null || amount <= BigDecimal.ZERO) { result.text = "مبلغ توکن باید عددی و بزرگ‌تر از صفر باشد."; return }
+        val url = if (index == 11) customRpc.text.toString().trim() else rpcByIndex[index] ?: ""
+        if (!url.startsWith("https://")) { result.text = "RPC باید با HTTPS شروع شود."; return }
+        checkButton.isEnabled = false
+        result.text = "در حال شبیه‌سازی فراخوانی قرارداد؛ هیچ تراکنشی ارسال نمی‌شود…"
+        executor.execute {
+            val report = try {
+                val expectedIds = mapOf(2 to "1", 3 to "56", 4 to "137", 5 to "42161", 6 to "10", 7 to "8453", 8 to "43114")
+                val chainHex = rpc(url, "eth_chainId", JSONArray()).optString("result")
+                val actualId = BigInteger(chainHex.removePrefix("0x").ifBlank { "0" }, 16).toString()
+                val expectedId = expectedIds[index]
+                if (expectedId != null && actualId != expectedId) throw IllegalStateException("Chain ID شبکه RPC با شبکه انتخابی سازگار نیست.")
+                val code = rpc(url, "eth_getCode", JSONArray().put(contract).put("latest")).optString("result")
+                if (code.isBlank() || code == "0x" || code == "0x0") throw IllegalStateException("در این شبکه قرارداد هوشمندی در این آدرس وجود ندارد.")
+                val decimalsHex = ethCall(url, contract, "0x313ce567").removePrefix("0x")
+                val decimals = BigInteger(decimalsHex.ifBlank { "0" }, 16).toInt()
+                if (decimals !in 0..36) throw IllegalStateException("اعشار قرارداد نامعتبر است.")
+                val scaled = amount.movePointRight(decimals)
+                if (scaled.stripTrailingZeros().scale() > 0) throw IllegalStateException("مبلغ بیش از تعداد اعشار مجاز توکن رقم دارد.")
+                val raw = scaled.toBigIntegerExact()
+                val amountHex = raw.toString(16).padStart(64, '0')
+                val toWord = destination.removePrefix("0x").lowercase().padStart(64, '0')
+                val data = "0xa9059cbb" + toWord + amountHex
+                val tx = JSONObject().put("from", wallet).put("to", contract).put("data", data)
+                val simulated = rpc(url, "eth_call", JSONArray().put(tx).put("latest")).optString("result")
+                if (simulated.isBlank()) throw IllegalStateException("پاسخ شبیه‌سازی خالی بود.")
+                val gasHex = rpc(url, "eth_estimateGas", JSONArray().put(tx)).optString("result")
+                val gas = BigInteger(gasHex.removePrefix("0x").ifBlank { "0" }, 16)
+                val priceHex = rpc(url, "eth_gasPrice", JSONArray()).optString("result")
+                val gasPrice = BigInteger(priceHex.removePrefix("0x").ifBlank { "0" }, 16)
+                val feeWei = gas.multiply(gasPrice)
+                val feeNative = BigDecimal(feeWei).divide(BigDecimal.TEN.pow(18), 12, RoundingMode.DOWN).stripTrailingZeros().toPlainString()
+                val nativeHex = rpc(url, "eth_getBalance", JSONArray().put(wallet).put("latest")).optString("result")
+                val nativeWei = BigInteger(nativeHex.removePrefix("0x").ifBlank { "0" }, 16)
+                val enough = nativeWei >= feeWei
+                "شبیه‌سازی قرارداد: موفق\nشبکه Chain ID: $actualId\nمبلغ توکن: $amount\nگس تخمینی: $gas\nکارمزد تقریبی با قیمت فعلی گس: $feeNative ارز بومی\nموجودی ارز بومی: " + BigDecimal(nativeWei).divide(BigDecimal.TEN.pow(18), 12, RoundingMode.DOWN).stripTrailingZeros().toPlainString() + "\n" + (if (enough) "موجودی بومی برای تخمین فعلی کارمزد کافی به نظر می‌رسد." else "هشدار: موجودی ارز بومی از تخمین فعلی کارمزد کمتر است.") + "\n\nاین فقط شبیه‌سازی در وضعیت فعلی زنجیره است؛ قیمت گس و وضعیت قرارداد می‌تواند تغییر کند. موفقیت شبیه‌سازی، انتقال قطعی یا نقدشوندگی توکن را تضمین نمی‌کند. تراکنش ارسال نشده است."
+            } catch (e: Exception) {
+                "شبیه‌سازی ناموفق بود: ${e.message ?: "خطای RPC یا قرارداد"}\n\nاین خطا ممکن است ناشی از موجودی ناکافی توکن، محدودیت قرارداد، آدرس مقصد نامعتبر، توقف انتقال یا RPC باشد. خطا به‌تنهایی علت را قطعی نمی‌کند؛ هیچ تراکنشی ارسال نشده است."
+            }
+            runOnUiThread { result.text = report; checkButton.isEnabled = true }
         }
     }
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
