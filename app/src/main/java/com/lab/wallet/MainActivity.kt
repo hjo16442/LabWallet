@@ -149,7 +149,7 @@ class MainActivity : Activity() {
         notes.add("⚠ اگر دارایی در صرافی یا سرویس نگهداری می‌شود، محدودیت برداشت، احراز هویت، whitelist و توقف موقت برداشت را فقط در همان سرویس بررسی کن.")
         notes.add("✓ اقدام امن: ابتدا یک مبلغ آزمایشی کوچک بفرست، پس از تأیید شبکه و دریافت آن، باقی مبلغ را منتقل کن؛ اگر کارمزد/حداقل برداشت نامشخص است ارسال نکن.")
         notes.add("برای ادامه، دکمه «باز کردن مستقیم Trust Wallet» را بزن و تراکنش را فقط داخل کیف پول رسمی خودت، پس از بازبینی کامل، تأیید کن.")
-        result.text = notes.joinToString("\\n")
+        result.text = notes.joinToString("\n")
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
