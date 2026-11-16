@@ -5,10 +5,10 @@ android {
     compileSdk = 35
     defaultConfig {
         applicationId = "com.lab.wallet"
-        minSdk = 26          // PBKDF2WithHmacSHA256 از API 26
+        minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0-lab"
+        versionCode = 2
+        versionName = "2.0-fa"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -16,5 +16,5 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     buildTypes { getByName("debug") { isDebuggable = true } }
-    lint { abortOnError = false }   // لب عمداً پر از آنتی‌پترن است
+    lint { abortOnError = false }
 }
