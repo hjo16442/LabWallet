@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="LabWallet"
+        android:allowBackup="true"
+        android:debuggable="true"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:theme="@android:style/Theme.Material.Light">
+        <!-- BUG-A15 allowBackup / BUG-A16 debuggable / BUG-A17 cleartext -->
+
+        <activity android:name=".MainActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- BUG-A9: دیپ‌لینک صادرشده، امضا بدون احراز هویت و بدون تأیید کاربر -->
+        <activity android:name=".DeepLinkActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="labwallet" android:host="sign" />
+            </intent-filter>
+        </activity>
+
+        <!-- BUG-A14: URL از intent-extra می‌آید -->
+        <activity android:name=".WebActivity" android:exported="true" />
+
+        <!-- BUG-A12: ContentProvider صادرشده و بدون permission -->
+        <provider
+            android:name=".VaultProvider"
+            android:authorities="com.lab.wallet.vault"
+            android:exported="true" />
+    </application>
+</manifest>
