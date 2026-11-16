@@ -23,6 +23,9 @@ class MainActivity : Activity() {
     private lateinit var address: EditText
     private lateinit var tokenContract: EditText
     private lateinit var customRpc: EditText
+    private lateinit var destinationNetwork: Spinner
+    private lateinit var destinationAddress: EditText
+    private lateinit var withdrawalAmount: EditText
     private lateinit var result: TextView
     private lateinit var checkButton: Button
     private val networks = listOf(
@@ -78,7 +81,18 @@ class MainActivity : Activity() {
         tokenContract = field("برای توکن‌های EVM آدرس قرارداد را وارد کن"); root.addView(tokenContract)
         root.addView(heading("۴) RPC سفارشی (فقط برای شبکه EVM سفارشی)"))
         customRpc = field("نشانی HTTPS سرویس RPC"); root.addView(customRpc)
+        root.addView(heading("۵) شبکه مقصد برداشت"))
+        destinationNetwork = Spinner(this).also {
+            it.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, networks)
+            root.addView(it)
+        }
+        root.addView(heading("۶) آدرس عمومی مقصد"))
+        destinationAddress = field("آدرس دریافت‌کننده را وارد کن"); root.addView(destinationAddress)
+        root.addView(heading("۷) مبلغ موردنظر (اختیاری)"))
+        withdrawalAmount = field("مثلاً 25.5"); withdrawalAmount.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
+        root.addView(withdrawalAmount)
         checkButton = button("شروع بررسی موجودی و شبکه") { checkAddress() }; root.addView(checkButton)
+        root.addView(button("بررسی آمادگی برداشت و راه‌حل خطا") { diagnoseWithdrawal() })
         root.addView(button("باز کردن مستقیم Trust Wallet") { openTrustWallet() })
         root.addView(heading("گزارش بررسی"))
         result = TextView(this).apply {
@@ -92,6 +106,50 @@ class MainActivity : Activity() {
             textSize = 14f
         })
         val scroll = ScrollView(this); scroll.addView(root); setContentView(scroll)
+    }
+
+
+    private fun validAddressForNetwork(index: Int, addr: String): Boolean {
+        return when (index) {
+            1 -> addr.matches(Regex("^(1|3)[a-km-zA-HJ-NP-Z1-9]{25,34}$")) ||
+                addr.matches(Regex("^bc1[ac-hj-np-z02-9]{11,71}$", RegexOption.IGNORE_CASE))
+            2, 3, 4, 5, 6, 7, 8, 11 -> addr.matches(Regex("^0x[0-9a-fA-F]{40}$"))
+            9 -> addr.matches(Regex("^[1-9A-HJ-NP-Za-km-z]{32,44}$"))
+            10 -> addr.matches(Regex("^T[1-9A-HJ-NP-Za-km-z]{33}$"))
+            else -> false
+        }
+    }
+
+    private fun diagnoseWithdrawal() {
+        val sourceIndex = network.selectedItemPosition
+        val targetIndex = destinationNetwork.selectedItemPosition
+        val source = address.text.toString().trim()
+        val target = destinationAddress.text.toString().trim()
+        val amountText = withdrawalAmount.text.toString().trim()
+        val amount = amountText.toBigDecimalOrNull()
+        val notes = mutableListOf<String>()
+        notes.add("گزارش آمادگی برداشت — بدون امضا و ارسال تراکنش")
+        if (sourceIndex == 0) notes.add("⛔ شبکه مبدأ را انتخاب کن.")
+        if (targetIndex == 0) notes.add("⛔ شبکه مقصد را انتخاب کن.")
+        if (sourceIndex != 0 && targetIndex != 0 && sourceIndex != targetIndex) {
+            notes.add("⛔ شبکه مبدأ و مقصد متفاوت است. برداشت را متوقف کن؛ فقط اگر سرویس مقصد صراحتاً همان شبکه را پشتیبانی می‌کند ادامه بده.")
+        } else if (sourceIndex != 0 && targetIndex != 0) {
+            notes.add("✓ شبکه انتخابی مبدأ و مقصد یکسان است؛ این مورد به‌تنهایی پشتیبانی صرافی/کیف پول مقصد را ثابت نمی‌کند.")
+        }
+        if (sourceIndex != 0 && !validAddressForNetwork(sourceIndex, source)) notes.add("⛔ قالب آدرس مبدأ با شبکه انتخابی سازگار نیست یا آدرس وارد نشده است.")
+        if (targetIndex != 0 && !validAddressForNetwork(targetIndex, target)) notes.add("⛔ قالب آدرس مقصد معتبر نیست یا با شبکه مقصد سازگار نیست.")
+        if (amountText.isNotBlank()) {
+            if (amount == null || amount <= BigDecimal.ZERO) notes.add("⛔ مبلغ باید عددی و بزرگ‌تر از صفر باشد.")
+            else notes.add("✓ مبلغ واردشده از نظر قالب عددی معتبر است؛ موجودی کافی بودن آن هنوز باید با کارمزد مقایسه شود.")
+        } else notes.add("ℹ مبلغ وارد نشده؛ برای محاسبه کفایت موجودی و کارمزد باید مبلغ مشخص باشد.")
+        if (tokenContract.text.toString().isNotBlank()) {
+            notes.add("ℹ توکن انتخاب شده: پیش از برداشت، قرارداد توکن و شبکه آن را از منبع رسمی تطبیق بده؛ برای کارمزد، ارز بومی شبکه لازم است.")
+        }
+        notes.add("⚠ موجودی قابل برداشت ممکن است از موجودی نمایش‌داده‌شده کمتر باشد؛ کارمزد، حداقل برداشت، قفل/استیک، توکن‌های فریز‌شده و تراکنش‌های در انتظار را بررسی کن.")
+        notes.add("⚠ اگر دارایی در صرافی یا سرویس نگهداری می‌شود، محدودیت برداشت، احراز هویت، whitelist و توقف موقت برداشت را فقط در همان سرویس بررسی کن.")
+        notes.add("✓ اقدام امن: ابتدا یک مبلغ آزمایشی کوچک بفرست، پس از تأیید شبکه و دریافت آن، باقی مبلغ را منتقل کن؛ اگر کارمزد/حداقل برداشت نامشخص است ارسال نکن.")
+        notes.add("برای ادامه، دکمه «باز کردن مستقیم Trust Wallet» را بزن و تراکنش را فقط داخل کیف پول رسمی خودت، پس از بازبینی کامل، تأیید کن.")
+        result.text = notes.joinToString("\\n")
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
