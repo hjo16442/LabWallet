@@ -2,6 +2,8 @@ package com.lab.wallet
 
 import java.math.BigInteger
 
+private typealias Pt = Pair<BigInteger, BigInteger>
+
 // BUG-A18: کریپتوی دست‌ساز. فقط برای لب — در محصول واقعی از کتابخانهٔ استاندارد استفاده کن.
 object Secp {
     val P: BigInteger = BigInteger("fffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f", 16)
@@ -13,7 +15,6 @@ object Secp {
     private val K = BigInteger("4242424242424242424242424242424242424242424242424242424242424242", 16) // BUG-A2
 
     private fun inv(a: BigInteger, m: BigInteger) = a.mod(m).modInverse(m)
-    private typealias Pt = Pair<BigInteger, BigInteger>
 
     private fun add(p: Pt?, q: Pt?): Pt? {
         if (p == null) return q
