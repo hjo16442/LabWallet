@@ -92,6 +92,7 @@ class MainActivity : Activity() {
         withdrawalAmount = field("مثلاً 25.5"); withdrawalAmount.inputType = android.text.InputType.TYPE_CLASS_NUMBER or android.text.InputType.TYPE_NUMBER_FLAG_DECIMAL
         root.addView(withdrawalAmount)
         checkButton = button("شروع بررسی موجودی و شبکه") { checkAddress() }; root.addView(checkButton)
+        root.addView(button("شناسایی خودکار توکن در شبکه‌های EVM") { autoIdentifyEvmToken() })
         root.addView(button("بررسی آمادگی برداشت و راه‌حل خطا") { diagnoseWithdrawal() })
         root.addView(button("باز کردن مستقیم Trust Wallet") { openTrustWallet() })
         root.addView(heading("گزارش بررسی"))
@@ -152,6 +153,47 @@ class MainActivity : Activity() {
         result.text = notes.joinToString("\n")
     }
 
+    private fun autoIdentifyEvmToken() {
+        val wallet = address.text.toString().trim()
+        val contract = tokenContract.text.toString().trim()
+        if (!wallet.matches(Regex("^0x[0-9a-fA-F]{40}$"))) { result.text = "آدرس عمومی EVM کیف پول را وارد کن."; return }
+        if (!contract.matches(Regex("^0x[0-9a-fA-F]{40}$"))) { result.text = "آدرس قرارداد توکن را وارد کن."; return }
+        checkButton.isEnabled = false
+        result.text = "در حال بررسی قرارداد در شبکه‌های EVM اصلی…"
+        executor.execute {
+            val candidates = listOf(
+                Triple("Ethereum", "https://ethereum-rpc.publicnode.com", "1"),
+                Triple("BNB Smart Chain", "https://bsc-rpc.publicnode.com", "56"),
+                Triple("Polygon", "https://polygon-bor-rpc.publicnode.com", "137"),
+                Triple("Arbitrum One", "https://arbitrum-one-rpc.publicnode.com", "42161"),
+                Triple("Optimism", "https://optimism-rpc.publicnode.com", "10"),
+                Triple("Base", "https://base-rpc.publicnode.com", "8453"),
+                Triple("Avalanche C-Chain", "https://avalanche-c-chain-rpc.publicnode.com", "43114")
+            )
+            val report = StringBuilder("نتیجه شناسایی خودکار قرارداد\nآدرس کیف پول: " + wallet + "\nقرارداد: " + contract + "\n")
+            var matches = 0
+            for ((label, rpcUrl, expectedId) in candidates) {
+                try {
+                    val chainHex = rpc(rpcUrl, "eth_chainId", JSONArray()).optString("result")
+                    val actualId = BigInteger(chainHex.removePrefix("0x").ifBlank { "0" }, 16).toString()
+                    if (actualId != expectedId) { report.append("\n" + label + ": Chain ID نامنطبق؛ نادیده گرفته شد."); continue }
+                    val code = rpc(rpcUrl, "eth_getCode", JSONArray().put(contract).put("latest")).optString("result")
+                    if (code.isBlank() || code == "0x" || code == "0x0") continue
+                    val owner = wallet.removePrefix("0x").lowercase().padStart(64, '0')
+                    val balanceHex = ethCall(rpcUrl, contract, "0x70a08231" + owner)
+                    val decimalsHex = ethCall(rpcUrl, contract, "0x313ce567")
+                    val raw = BigInteger(balanceHex.removePrefix("0x").ifBlank { "0" }, 16)
+                    val decimals = BigInteger(decimalsHex.removePrefix("0x").ifBlank { "0" }, 16).toInt()
+                    if (decimals !in 0..36) throw IllegalStateException("اعشار قرارداد نامعتبر است")
+                    val human = BigDecimal(raw).divide(BigDecimal.TEN.pow(decimals), maxOf(decimals, 1), RoundingMode.DOWN).stripTrailingZeros().toPlainString()
+                    if (raw > BigInteger.ZERO) { matches++; report.append("\n\n✓ " + label + " (Chain ID " + actualId + ")\nموجودی قرارداد: " + human + "\nاعشار: " + decimals) }
+                } catch (e: Exception) { report.append("\n" + label + ": بررسی ناموفق (" + (e.message ?: "خطای RPC") + ")") }
+            }
+            if (matches == 0) report.append("\n\nدر شبکه‌های بررسی‌شده موجودی مثبت تأیید نشد. این نتیجه ثابت نمی‌کند دارایی وجود ندارد؛ ممکن است شبکه دیگری باشد یا API/قرارداد پاسخ استاندارد ندهد.")
+            report.append("\n\nاین بررسی فقط‌خواندنی است و انتقال‌پذیری، نقدشوندگی یا نبود محدودیت قرارداد را تضمین نمی‌کند.")
+            runOnUiThread { result.text = report.toString(); checkButton.isEnabled = true }
+        }
+    }
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private fun checkAddress() {
@@ -241,8 +283,14 @@ class MainActivity : Activity() {
         val wei = if (native.isBlank()) BigInteger.ZERO else BigInteger(native, 16)
         val amount = BigDecimal(wei).divide(BigDecimal.TEN.pow(18), 10, RoundingMode.DOWN).stripTrailingZeros().toPlainString()
         val chainId = rpc(url, "eth_chainId", JSONArray()).optString("result")
-        val out = StringBuilder("شبکه انتخابی: $label\nChain ID پاسخ RPC: $chainId\nموجودی ارز بومی: $amount\n")
+        val expectedIds = mapOf(2 to "1", 3 to "56", 4 to "137", 5 to "42161", 6 to "10", 7 to "8453", 8 to "43114")
+        val actualChainId = BigInteger(chainId.removePrefix("0x").ifBlank { "0" }, 16).toString()
+        val expected = expectedIds[networks.indexOf(label)]
+        if (expected != null && actualChainId != expected) throw IllegalStateException("شبکه RPC با انتخاب شما تطابق ندارد؛ Chain ID مورد انتظار " + expected + " و پاسخ " + actualChainId)
+        val out = StringBuilder("شبکه انتخابی: $label\nChain ID پاسخ RPC: $actualChainId\nموجودی ارز بومی: $amount\n")
         if (contract.isNotBlank()) {
+            val code = rpc(url, "eth_getCode", JSONArray().put(contract).put("latest")).optString("result")
+            if (code.isBlank() || code == "0x" || code == "0x0") throw IllegalStateException("در این شبکه کدی در آدرس قرارداد وجود ندارد؛ قرارداد یا شبکه اشتباه است.")
             val owner = addr.removePrefix("0x").lowercase().padStart(64, '0')
             val balanceHex = ethCall(url, contract, "0x70a08231$owner")
             val decimalsHex = ethCall(url, contract, "0x313ce567")
