@@ -77,8 +77,9 @@ class MainActivity : Activity() {
         }
         root.addView(heading("۲) آدرس عمومی کیف پول"))
         address = field("آدرس عمومی را وارد کن"); root.addView(address)
-        root.addView(heading("۳) آدرس قرارداد توکن (اختیاری)"))
-        tokenContract = field("برای توکن‌های EVM آدرس قرارداد را وارد کن"); root.addView(tokenContract)
+        root.addView(heading("۳) آدرس قرارداد / شناسه توکن (اختیاری)"))
+        tokenContract = field("برای توکن EVM قرارداد، برای سولانا Mint را وارد کن"); root.addView(tokenContract)
+        root.addView(button("انتخاب خودکار قرارداد رسمی USDT برای شبکه") { applyUsdtContract() })
         root.addView(heading("۴) RPC سفارشی (فقط برای شبکه EVM سفارشی)"))
         customRpc = field("نشانی HTTPS سرویس RPC"); root.addView(customRpc)
         root.addView(heading("۵) شبکه مقصد برداشت"))
@@ -152,6 +153,28 @@ class MainActivity : Activity() {
         notes.add("✓ اقدام امن: ابتدا یک مبلغ آزمایشی کوچک بفرست، پس از تأیید شبکه و دریافت آن، باقی مبلغ را منتقل کن؛ اگر کارمزد/حداقل برداشت نامشخص است ارسال نکن.")
         notes.add("برای ادامه، دکمه «باز کردن مستقیم Trust Wallet» را بزن و تراکنش را فقط داخل کیف پول رسمی خودت، پس از بازبینی کامل، تأیید کن.")
         result.text = notes.joinToString("\n")
+    }
+
+    private fun applyUsdtContract() {
+        val index = network.selectedItemPosition
+        val contract = when (index) {
+            2 -> "0xdAC17F958D2ee523a2206206994597C13D831ec7"
+            3 -> "0x55d398326f99059fF775485246999027B3197955"
+            4 -> "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"
+            5 -> "0xFd086bC7CD5C481DCC9C85ebE478A1C0b69FCbb9"
+            6 -> "0x94b008aA00579c1307B0EF2c499aD98a8ce58e58"
+            7 -> "0xfde4C96c8593536E31F229EA8f37b2ADa2699bb2"
+            8 -> "0x9702230A8Ea53601f5cD2dc00fDBc13d4dF4A8c7"
+            9 -> "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
+            10 -> "TR7NHqjeKQxGTCi8q8ZY4pL8otSzgjLj6t"
+            else -> ""
+        }
+        if (contract.isBlank()) {
+            result.text = "برای این انتخاب، قرارداد آماده USDT تعریف نشده است. شبکه را از فهرست انتخاب کن؛ شبکه سفارشی نیازمند بررسی دستی قرارداد رسمی است."
+            return
+        }
+        tokenContract.setText(contract)
+        result.text = "شناسه USDT برای شبکه ${networks[index]} در فیلد قرار گرفت. اکنون «شروع بررسی موجودی و شبکه» را بزن و پیش از برداشت، شبکه و قرارداد را با منبع رسمی و کیف پول مقصد تطبیق بده."
     }
 
     private fun autoIdentifyEvmToken() {
@@ -229,7 +252,8 @@ class MainActivity : Activity() {
                 val data = "0xa9059cbb" + toWord + amountHex
                 val tx = JSONObject().put("from", wallet).put("to", contract).put("data", data)
                 val simulated = rpc(url, "eth_call", JSONArray().put(tx).put("latest")).optString("result")
-                if (simulated.isBlank()) throw IllegalStateException("پاسخ شبیه‌سازی خالی بود.")
+                // Legacy ERC-20 contracts such as original Ethereum USDT may return no data on success.
+                val callNote = if (simulated.isBlank() || simulated == "0x") "فراخوانی بدون مقدار بازگشتی (در برخی قراردادهای قدیمی استاندارد است)" else "پاسخ قرارداد دریافت شد"
                 val gasHex = rpc(url, "eth_estimateGas", JSONArray().put(tx)).optString("result")
                 val gas = BigInteger(gasHex.removePrefix("0x").ifBlank { "0" }, 16)
                 val priceHex = rpc(url, "eth_gasPrice", JSONArray()).optString("result")
@@ -239,7 +263,7 @@ class MainActivity : Activity() {
                 val nativeHex = rpc(url, "eth_getBalance", JSONArray().put(wallet).put("latest")).optString("result")
                 val nativeWei = BigInteger(nativeHex.removePrefix("0x").ifBlank { "0" }, 16)
                 val enough = nativeWei >= feeWei
-                "شبیه‌سازی قرارداد: موفق\nشبکه Chain ID: $actualId\nمبلغ توکن: $amount\nگس تخمینی: $gas\nکارمزد تقریبی با قیمت فعلی گس: $feeNative ارز بومی\nموجودی ارز بومی: " + BigDecimal(nativeWei).divide(BigDecimal.TEN.pow(18), 12, RoundingMode.DOWN).stripTrailingZeros().toPlainString() + "\n" + (if (enough) "موجودی بومی برای تخمین فعلی کارمزد کافی به نظر می‌رسد." else "هشدار: موجودی ارز بومی از تخمین فعلی کارمزد کمتر است.") + "\n\nاین فقط شبیه‌سازی در وضعیت فعلی زنجیره است؛ قیمت گس و وضعیت قرارداد می‌تواند تغییر کند. موفقیت شبیه‌سازی، انتقال قطعی یا نقدشوندگی توکن را تضمین نمی‌کند. تراکنش ارسال نشده است."
+                "شبیه‌سازی قرارداد: موفق — $callNote\nشبکه Chain ID: $actualId\nمبلغ توکن: $amount\nگس تخمینی: $gas\nکارمزد تقریبی با قیمت فعلی گس: $feeNative ارز بومی\nموجودی ارز بومی: " + BigDecimal(nativeWei).divide(BigDecimal.TEN.pow(18), 12, RoundingMode.DOWN).stripTrailingZeros().toPlainString() + "\n" + (if (enough) "موجودی بومی برای تخمین فعلی کارمزد کافی به نظر می‌رسد." else "هشدار: موجودی ارز بومی از تخمین فعلی کارمزد کمتر است.") + "\n\nاین فقط شبیه‌سازی در وضعیت فعلی زنجیره است؛ قیمت گس و وضعیت قرارداد می‌تواند تغییر کند. موفقیت شبیه‌سازی، انتقال قطعی یا نقدشوندگی توکن را تضمین نمی‌کند. تراکنش ارسال نشده است."
             } catch (e: Exception) {
                 "شبیه‌سازی ناموفق بود: ${e.message ?: "خطای RPC یا قرارداد"}\n\nاین خطا ممکن است ناشی از موجودی ناکافی توکن، محدودیت قرارداد، آدرس مقصد نامعتبر، توقف انتقال یا RPC باشد. خطا به‌تنهایی علت را قطعی نمی‌کند؛ هیچ تراکنشی ارسال نشده است."
             }
@@ -285,7 +309,7 @@ class MainActivity : Activity() {
                         val rpc = if (index == 11) customRpc.text.toString().trim() else rpcByIndex[index]!!
                         checkEvm(addr, rpc, networks[index], contract)
                     }
-                    "SOL" -> checkSolana(addr)
+                    "SOL" -> checkSolana(addr, contract)
                     "TRON" -> checkTron(addr, contract)
                     else -> "این شبکه در حال حاضر در بررسی‌گر داخلی پشتیبانی نمی‌شود."
                 }
@@ -363,7 +387,7 @@ class MainActivity : Activity() {
         return rpc(url, "eth_call", JSONArray().put(call).put("latest")).getString("result")
     }
 
-    private fun checkSolana(addr: String): String {
+    private fun checkSolana(addr: String, tokenMint: String): String {
         val url = "https://api.mainnet-beta.solana.com"
         val lamports = rpc(url, "getBalance", JSONArray().put(addr)).getJSONObject("result").getLong("value")
         val sol = BigDecimal.valueOf(lamports).divide(BigDecimal("1000000000"), 9, RoundingMode.DOWN).stripTrailingZeros().toPlainString()
@@ -375,9 +399,12 @@ class MainActivity : Activity() {
             val info = values.getJSONObject(i).getJSONObject("account").getJSONObject("data").getJSONObject("parsed").getJSONObject("info")
             val mint = info.getString("mint")
             val amount = info.getJSONObject("tokenAmount")
-            tokens.append("\n• Mint: $mint | مقدار: ${amount.optString("uiAmountString", "نامشخص")}")
+            if (tokenMint.isBlank() || mint.equals(tokenMint, true)) {
+                tokens.append("\n• Mint: $mint | مقدار: ${amount.optString("uiAmountString", "نامشخص")}")
+            }
         }
-        return "شبکه: Solana Mainnet\nموجودی SOL: $sol\nتعداد حساب‌های توکن SPL: ${values.length()}\nتوکن‌ها:$tokens\n\nکارمزد و موجودی قابل انتقال نهایی به وضعیت حساب و حداقل موجودی اجاره‌ای نیز وابسته است."
+        if (tokenMint.isNotBlank() && tokens.isEmpty()) tokens.append("\nتوکنی با این Mint در حساب‌های SPL کلاسیک پیدا نشد.")
+        return "شبکه: Solana Mainnet\nموجودی SOL: $sol\nتعداد حساب‌های توکن بررسی‌شده: ${values.length()}\nتوکن‌ها:$tokens\n\nکارمزد و موجودی قابل انتقال نهایی به وضعیت حساب و حداقل موجودی اجاره‌ای نیز وابسته است."
     }
 
     private fun checkTron(addr: String, contract: String): String {
