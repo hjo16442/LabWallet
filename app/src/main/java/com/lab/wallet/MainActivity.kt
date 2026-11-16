@@ -58,7 +58,7 @@ class MainActivity : Activity() {
             setPadding(0, dp(8), 0, dp(8))
         }
         fun field(hintText: String) = EditText(this).apply {
-            hint = hintText; textSize = 14f; singleLine = true
+            hint = hintText; textSize = 14f; isSingleLine = true
             inputType = android.text.InputType.TYPE_CLASS_TEXT
         }
         fun button(text: String, action: () -> Unit) = Button(this).apply {
