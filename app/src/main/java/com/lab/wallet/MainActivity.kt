@@ -528,20 +528,20 @@ class MainActivity : Activity() {
             return
         }
         checkButton.isEnabled = false
-        result.text = "در حال خواندن مجوزهای Owner و Active از شبکه اصلی TRON؛ فقط‌خواندنی…"
+        result.text = "در حال بررسی مجوزها و سابقه تغییر دسترسی؛ فقط‌خواندنی…"
         executor.execute {
             val report = try {
                 val body = JSONObject().put("address", wallet).put("visible", true)
                 val account = JSONObject(request("https://api.trongrid.io/wallet/getaccount", body.toString()))
                 if (account.has("Error")) throw IllegalStateException(account.optString("Error"))
                 if (!account.has("address")) {
-                    "حساب از TronGrid پاسخ معتبر نگرفت یا هنوز روی زنجیره فعال نیست. این نتیجه به‌تنهایی به معنی از دست رفتن دارایی نیست."
+                    "حساب از TronGrid پاسخ معتبر نگرفت یا هنوز روی زنجیره فعال نیست."
                 } else {
                     val out = StringBuilder()
-                    out.append("گزارش مجوز امضای TRON Mainnet\nآدرس عمومی: $wallet\n")
+                    out.append("گزارش بازیابی امن TRON Mainnet\nآدرس عمومی: $wallet\n")
                     val owner = account.optJSONObject("owner_permission")
                     if (owner == null) {
-                        out.append("\n⛔ مجوز Owner در پاسخ وجود ندارد؛ ساختار حساب نیازمند بررسی بیشتر است.\n")
+                        out.append("\nمجوز Owner در پاسخ موجود نیست؛ ساختار حساب نیازمند بررسی بیشتر است.\n")
                     } else {
                         appendTronPermission(out, "Owner", owner, wallet, false)
                     }
@@ -551,21 +551,53 @@ class MainActivity : Activity() {
                     } else {
                         for (i in 0 until actives.length()) {
                             val p = actives.optJSONObject(i) ?: continue
-                            appendTronPermission(out, "Active #${p.optInt("id", i + 2)}", p, wallet, true)
+                            appendTronPermission(out, "Active #\${p.optInt("id", i + 2)}", p, wallet, true)
                         }
                     }
-                    val witness = account.optJSONObject("witness_permission")
-                    if (witness != null) appendTronPermission(out, "Witness", witness, wallet, false)
-                    out.append("\nنتیجه و محدودیت:\n")
-                    out.append("• اگر آدرس شما در فهرست کلیدهای Owner/Active نباشد، یا وزن آن به حد نصاب نرسد، همین کلید به‌تنهایی برای آن مجوز کافی نیست.\n")
-                    out.append("• برای انتقال TRC-20 باید Active permission انتخاب‌شده اجازه اجرای قرارداد هوشمند را نیز داشته باشد؛ فهرست بالا داده خام عملیات را نشان می‌دهد.\n")
-                    out.append("• این بررسی ثابت نمی‌کند Trust Wallet کلید خصوصی متناظر را در دسترس دارد؛ فقط وضعیت مجوز ثبت‌شده روی بلاک‌چین را می‌خواند.\n")
-                    out.append("• اگر کلید مجاز دیگری در دسترس نباشد، این برنامه نمی‌تواند مجوز را دور بزند یا خودکار تغییر دهد. تغییر مجوز فقط با امضای معتبرِ دارای اختیار فعلی ممکن است.\n")
-                    out.append("\nهیچ عبارت بازیابی، کلید خصوصی یا امضایی دریافت یا ارسال نشد.")
+                    out.append("\nسابقه تغییر مجوز:\n")
+                    try {
+                        val historyUrl = "https://api.trongrid.io/v1/accounts/$wallet/transactions?only_confirmed=true&limit=200&order_by=block_timestamp%2Cdesc"
+                        val history = JSONObject(request(historyUrl))
+                        val txs = history.optJSONArray("data") ?: JSONArray()
+                        var updates = 0
+                        for (i in 0 until txs.length()) {
+                            val tx = txs.optJSONObject(i) ?: continue
+                            val contracts = tx.optJSONObject("raw_data")?.optJSONArray("contract") ?: JSONArray()
+                            for (j in 0 until contracts.length()) {
+                                val c = contracts.optJSONObject(j) ?: continue
+                                if (c.optString("type") == "AccountPermissionUpdateContract") {
+                                    updates++
+                                    val txid = tx.optString("txID")
+                                    val stamp = tx.optLong("block_timestamp", 0L)
+                                    val whenText = if (stamp > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(stamp)) else "زمان نامشخص"
+                                    out.append("\n• تغییر مجوز پیدا شد: $whenText\n  TXID: $txid\n  https://tronscan.org/#/transaction/$txid\n")
+                                }
+                            }
+                        }
+                        if (updates == 0) out.append("در ۲۰۰ تراکنش تأییدشده اخیر، تغییر مجوز پیدا نشد؛ تغییر قدیمی‌تر رد نمی‌شود.\n")
+                    } catch (historyError: Exception) {
+                        out.append("سابقه تراکنش‌ها خوانده نشد: \${historyError.message ?: "خطای API"}\n")
+                    }
+                    out.append("\nارزیابی امکان بازیابی:\n")
+                    val ownerKeys = owner?.optJSONArray("keys") ?: JSONArray()
+                    var walletOwnerWeight = 0L
+                    for (i in 0 until ownerKeys.length()) {
+                        val k = ownerKeys.optJSONObject(i) ?: continue
+                        if (k.optString("address").equals(wallet, true)) walletOwnerWeight += k.optLong("weight", 0L)
+                    }
+                    val threshold = owner?.optLong("threshold", -1L) ?: -1L
+                    if (threshold > 0 && walletOwnerWeight >= threshold) {
+                        out.append("✓ آدرس حساب در مجوز Owner به حد نصاب می‌رسد؛ اگر کلید خصوصی متناظر در اختیار تو باشد، می‌توانی تغییر مجوز را با کیف پول رسمی امضا کنی.\n")
+                    } else {
+                        out.append("⚠ آدرس حساب در Owner به‌تنهایی به حد نصاب نمی‌رسد. عبارت بازیابی فقط در صورتی کمک می‌کند که یکی از کلیدهای مشتق‌شده از آن در فهرست مجاز باشد و وزن کافی داشته باشد.\n")
+                    }
+                    out.append("• این نسخه عبارت بازیابی یا کلید خصوصی نمی‌گیرد و تراکنش تغییر مجوز نمی‌سازد یا امضا نمی‌کند.\n")
+                    out.append("• اگر هیچ کلید مجازِ در دسترس تو وجود نداشته باشد، برنامه نمی‌تواند مجوز را دور بزند.\n")
+                    out.append("\nهیچ تغییری در حساب انجام نشد؛ گزارش فقط‌خواندنی است.")
                     out.toString()
                 }
             } catch (e: Exception) {
-                "خواندن مجوزهای TRON ناموفق بود: ${e.message ?: "خطای ارتباط یا محدودیت API"}\nموجودی صفر فرض نشده و هیچ تغییری در کیف پول ایجاد نشده است."
+                "بررسی TRON ناموفق بود: \${e.message ?: "خطای ارتباط یا محدودیت API"}\nموجودی صفر فرض نشده و هیچ تغییری در کیف پول ایجاد نشده است."
             }
             runOnUiThread { result.text = report; checkButton.isEnabled = true }
         }
