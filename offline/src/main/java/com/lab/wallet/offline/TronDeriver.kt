@@ -30,23 +30,44 @@ internal object TronDeriver {
         val found = mutableListOf<String>()
         val checked = mutableListOf<String>()
         try {
+            // Check standard BIP44 TRON account/change/address-index combinations.
+            // This is a bounded path search, not a passphrase or private-key brute force.
             val master = masterKey(seed)
             val purpose = deriveChild(master, 44L or HARDENED)
             master.chain.fill(0)
             val coin = deriveChild(purpose, 195L or HARDENED)
             purpose.chain.fill(0)
-            val account = deriveChild(coin, HARDENED)
-            coin.chain.fill(0)
-            val external = deriveChild(account, 0L)
-            account.chain.fill(0)
+
+            // Accounts 0..20, external chain 0, address indexes 0..100.
+            for (accountIndex in 0L..20L) {
+                val account = deriveChild(coin, accountIndex or HARDENED)
+                val external = deriveChild(account, 0L)
+                for (index in 0L..100L) {
+                    val child = deriveChild(external, index)
+                    val path = "m/44'/195'/$accountIndex'/0/$index"
+                    val address = tronAddress(child.key)
+                    checked.add(path)
+                    if (address == wanted) found.add(path)
+                    child.chain.fill(0)
+                }
+                external.chain.fill(0)
+                account.chain.fill(0)
+            }
+
+            // Also check internal/change chain 1 for account 0.
+            val accountZero = deriveChild(coin, HARDENED)
+            val internal = deriveChild(accountZero, 1L)
             for (index in 0L..100L) {
-                val child = deriveChild(external, index)
+                val child = deriveChild(internal, index)
+                val path = "m/44'/195'/0'/1/$index"
                 val address = tronAddress(child.key)
-                checked.add("m/44'/195'/0'/0/$index  →  $address")
-                if (address == wanted) found.add("m/44'/195'/0'/0/$index")
+                checked.add(path)
+                if (address == wanted) found.add(path)
                 child.chain.fill(0)
             }
-            external.chain.fill(0)
+            internal.chain.fill(0)
+            accountZero.chain.fill(0)
+            coin.chain.fill(0)
         } finally {
             seed.fill(0)
         }
