@@ -96,6 +96,7 @@ class MainActivity : Activity() {
         root.addView(button("شناسایی خودکار توکن در شبکه‌های EVM") { autoIdentifyEvmToken() })
         root.addView(button("شبیه‌سازی امن انتقال توکن (بدون ارسال)") { simulateEvmTokenTransfer() })
         root.addView(button("بررسی مالک و اختیارات قرارداد (EVM)") { analyzeContractOwner() })
+        root.addView(button("بررسی مجوز امضای حساب TRON") { diagnoseTronPermissions() })
         root.addView(button("بررسی آمادگی برداشت و راه‌حل خطا") { diagnoseWithdrawal() })
         root.addView(button("باز کردن مستقیم Trust Wallet") { openTrustWallet() })
         root.addView(heading("گزارش بررسی"))
@@ -514,6 +515,87 @@ class MainActivity : Activity() {
         if (contract.isBlank()) out.append("برای فیلترکردن یک توکن TRC-20، آدرس قرارداد آن را وارد کن.\n")
         out.append("\nبرای انتقال توکن TRC-20 معمولاً TRX و منابع شبکه مانند Energy/Bandwidth لازم است.")
         return out.toString()
+    }
+
+    private fun diagnoseTronPermissions() {
+        val wallet = address.text.toString().trim()
+        if (network.selectedItemPosition != 10) {
+            result.text = "ابتدا شبکه «ترون (TRON / TRX)» را انتخاب کن."
+            return
+        }
+        if (!wallet.matches(Regex("^T[1-9A-HJ-NP-Za-km-z]{33}$"))) {
+            result.text = "آدرس عمومی معتبر TRON را وارد کن. عبارت بازیابی یا کلید خصوصی لازم نیست."
+            return
+        }
+        checkButton.isEnabled = false
+        result.text = "در حال خواندن مجوزهای Owner و Active از شبکه اصلی TRON؛ فقط‌خواندنی…"
+        executor.execute {
+            val report = try {
+                val body = JSONObject().put("address", wallet).put("visible", true)
+                val account = JSONObject(request("https://api.trongrid.io/wallet/getaccount", body.toString()))
+                if (account.has("Error")) throw IllegalStateException(account.optString("Error"))
+                if (!account.has("address")) {
+                    "حساب از TronGrid پاسخ معتبر نگرفت یا هنوز روی زنجیره فعال نیست. این نتیجه به‌تنهایی به معنی از دست رفتن دارایی نیست."
+                } else {
+                    val out = StringBuilder()
+                    out.append("گزارش مجوز امضای TRON Mainnet\nآدرس عمومی: $wallet\n")
+                    val owner = account.optJSONObject("owner_permission")
+                    if (owner == null) {
+                        out.append("\n⛔ مجوز Owner در پاسخ وجود ندارد؛ ساختار حساب نیازمند بررسی بیشتر است.\n")
+                    } else {
+                        appendTronPermission(out, "Owner", owner, wallet, false)
+                    }
+                    val actives = account.optJSONArray("active_permission") ?: JSONArray()
+                    if (actives.length() == 0) {
+                        out.append("\nهیچ Active permission در پاسخ دیده نشد.\n")
+                    } else {
+                        for (i in 0 until actives.length()) {
+                            val p = actives.optJSONObject(i) ?: continue
+                            appendTronPermission(out, "Active #\${p.optInt("id", i + 2)}", p, wallet, true)
+                        }
+                    }
+                    val witness = account.optJSONObject("witness_permission")
+                    if (witness != null) appendTronPermission(out, "Witness", witness, wallet, false)
+                    out.append("\nنتیجه و محدودیت:\n")
+                    out.append("• اگر آدرس شما در فهرست کلیدهای Owner/Active نباشد، یا وزن آن به حد نصاب نرسد، همین کلید به‌تنهایی برای آن مجوز کافی نیست.\n")
+                    out.append("• برای انتقال TRC-20 باید Active permission انتخاب‌شده اجازه اجرای قرارداد هوشمند را نیز داشته باشد؛ فهرست بالا داده خام عملیات را نشان می‌دهد.\n")
+                    out.append("• این بررسی ثابت نمی‌کند Trust Wallet کلید خصوصی متناظر را در دسترس دارد؛ فقط وضعیت مجوز ثبت‌شده روی بلاک‌چین را می‌خواند.\n")
+                    out.append("• اگر کلید مجاز دیگری در دسترس نباشد، این برنامه نمی‌تواند مجوز را دور بزند یا خودکار تغییر دهد. تغییر مجوز فقط با امضای معتبرِ دارای اختیار فعلی ممکن است.\n")
+                    out.append("\nهیچ عبارت بازیابی، کلید خصوصی یا امضایی دریافت یا ارسال نشد.")
+                    out.toString()
+                }
+            } catch (e: Exception) {
+                "خواندن مجوزهای TRON ناموفق بود: \${e.message ?: "خطای ارتباط یا محدودیت API"}\nموجودی صفر فرض نشده و هیچ تغییری در کیف پول ایجاد نشده است."
+            }
+            runOnUiThread { result.text = report; checkButton.isEnabled = true }
+        }
+    }
+
+    private fun appendTronPermission(out: StringBuilder, label: String, permission: JSONObject, wallet: String, active: Boolean) {
+        val threshold = permission.optLong("threshold", -1L)
+        val keys = permission.optJSONArray("keys") ?: JSONArray()
+        var ownWeight = 0L
+        val keyLines = StringBuilder()
+        for (i in 0 until keys.length()) {
+            val key = keys.optJSONObject(i) ?: continue
+            val signer = key.optString("address")
+            val weight = key.optLong("weight", 0L)
+            val isOurs = signer.equals(wallet, true)
+            if (isOurs) ownWeight += weight
+            keyLines.append("\n  • $signer | وزن: $weight\${if (isOurs) "  ← آدرس حساب شما" else ""}")
+        }
+        out.append("\n$label — حد نصاب: $threshold")
+        out.append("\nوزن آدرس حساب شما: $ownWeight")
+        if (threshold > 0 && ownWeight >= threshold) {
+            out.append("\n✓ وزن این آدرس به‌تنهایی به حد نصاب می‌رسد.")
+        } else {
+            out.append("\n⚠ وزن این آدرس به‌تنهایی به حد نصاب نمی‌رسد.")
+        }
+        out.append("\nکلیدهای ثبت‌شده:$keyLines")
+        if (active) {
+            out.append("\nمحدوده عملیات (operations): \${permission.optString("operations", "در پاسخ موجود نیست")}")
+        }
+        out.append("\n")
     }
 
     private fun openTrustWallet() {
