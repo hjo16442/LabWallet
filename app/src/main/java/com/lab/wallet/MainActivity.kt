@@ -555,30 +555,73 @@ class MainActivity : Activity() {
                             appendTronPermission(out, "Active #$activeId", p, wallet, true)
                         }
                     }
-                    out.append("\nسابقه تغییر مجوز:\n")
+                    out.append("\nسابقه کامل تغییر مجوز (صفحه‌بندی‌شده):\n")
                     try {
-                        val historyUrl = "https://api.trongrid.io/v1/accounts/$wallet/transactions?only_confirmed=true&limit=200&order_by=block_timestamp%2Cdesc"
-                        val history = JSONObject(request(historyUrl))
-                        val txs = history.optJSONArray("data") ?: JSONArray()
+                        var fingerprint: String? = null
+                        var pages = 0
+                        var scanned = 0
                         var updates = 0
-                        for (i in 0 until txs.length()) {
-                            val tx = txs.optJSONObject(i) ?: continue
-                            val contracts = tx.optJSONObject("raw_data")?.optJSONArray("contract") ?: JSONArray()
-                            for (j in 0 until contracts.length()) {
-                                val c = contracts.optJSONObject(j) ?: continue
-                                if (c.optString("type") == "AccountPermissionUpdateContract") {
-                                    updates++
-                                    val txid = tx.optString("txID")
-                                    val stamp = tx.optLong("block_timestamp", 0L)
-                                    val whenText = if (stamp > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(stamp)) else "زمان نامشخص"
-                                    out.append("\n• تغییر مجوز پیدا شد: $whenText\n  TXID: $txid\n  https://tronscan.org/#/transaction/$txid\n")
+                        var historyComplete = false
+                        val maxPages = 250
+                        do {
+                            val base = "https://api.trongrid.io/v1/accounts/$wallet/transactions?only_confirmed=true&limit=200&order_by=block_timestamp%2Casc"
+                            val historyUrl = if (fingerprint.isNullOrBlank()) base else base + "&fingerprint=" + java.net.URLEncoder.encode(fingerprint, "UTF-8")
+                            val history = JSONObject(request(historyUrl))
+                            val txs = history.optJSONArray("data") ?: JSONArray()
+                            pages++
+                            scanned += txs.length()
+                            for (i in 0 until txs.length()) {
+                                val tx = txs.optJSONObject(i) ?: continue
+                                val contracts = tx.optJSONObject("raw_data")?.optJSONArray("contract") ?: JSONArray()
+                                for (j in 0 until contracts.length()) {
+                                    val c = contracts.optJSONObject(j) ?: continue
+                                    if (c.optString("type") == "AccountPermissionUpdateContract") {
+                                        updates++
+                                        val txid = tx.optString("txID")
+                                        val stamp = tx.optLong("block_timestamp", 0L)
+                                        val whenText = if (stamp > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date(stamp)) else "زمان نامشخص"
+                                        val block = tx.optLong("blockNumber", 0L)
+                                        val value = c.optJSONObject("parameter")?.optJSONObject("value")
+                                        out.append("\n• تغییر مجوز #$updates: $whenText | بلوک: $block\n  TXID: $txid\n  https://tronscan.org/#/transaction/$txid\n")
+                                        val changedOwner = value?.optJSONObject("owner")
+                                        if (changedOwner != null) {
+                                            out.append("  Owner جدید — حدنصاب: ${changedOwner.optLong("threshold", -1L)}")
+                                            val changedKeys = changedOwner.optJSONArray("keys") ?: JSONArray()
+                                            for (k in 0 until changedKeys.length()) {
+                                                val key = changedKeys.optJSONObject(k) ?: continue
+                                                out.append("\n    • ${key.optString("address")} | وزن: ${key.optLong("weight", 0L)}")
+                                            }
+                                            out.append("\n")
+                                        }
+                                        val changedActives = value?.optJSONArray("actives") ?: JSONArray()
+                                        for (a in 0 until changedActives.length()) {
+                                            val active = changedActives.optJSONObject(a) ?: continue
+                                            out.append("  Active #${active.optInt("id", a + 2)} — حدنصاب: ${active.optLong("threshold", -1L)} | operations: ${active.optString("operations", "نامشخص")}\n")
+                                            val activeKeys = active.optJSONArray("keys") ?: JSONArray()
+                                            for (k in 0 until activeKeys.length()) {
+                                                val key = activeKeys.optJSONObject(k) ?: continue
+                                                out.append("    • ${key.optString("address")} | وزن: ${key.optLong("weight", 0L)}\n")
+                                            }
+                                        }
+                                    }
                                 }
                             }
+                            fingerprint = history.optJSONObject("meta")?.optString("fingerprint")?.takeIf { it.isNotBlank() && it != "null" }
+                            runOnUiThread {
+                                result.text = "در حال پیمایش تاریخچه TRON…\nصفحه‌ها: $pages\nتراکنش‌های بررسی‌شده: $scanned\nتغییر مجوز پیدا‌شده: $updates"
+                            }
+                            if (txs.length() == 0 || fingerprint == null) historyComplete = true
+                        } while (!historyComplete && pages < maxPages)
+                        out.append("\nجمع‌بندی تاریخچه: $pages صفحه، $scanned تراکنش، $updates تغییر مجوز.\n")
+                        if (historyComplete) {
+                            out.append("✓ صفحه‌بندی به انتهای داده‌های تأییدشده رسید.\n")
+                        } else {
+                            out.append("⚠ سقف ایمنی $maxPages صفحه رسید؛ تاریخچه ممکن است هنوز ادامه داشته باشد.\n")
                         }
-                        if (updates == 0) out.append("در ۲۰۰ تراکنش تأییدشده اخیر، تغییر مجوز پیدا نشد؛ تغییر قدیمی‌تر رد نمی‌شود.\n")
+                        if (updates == 0 && historyComplete) out.append("در تاریخچه تأییدشده‌ای که API ارائه کرد، تراکنش تغییر مجوز پیدا نشد.\n")
                     } catch (historyError: Exception) {
                         val historyMessage = historyError.message ?: "API error"
-                        out.append("سابقه تراکنش‌ها خوانده نشد: $historyMessage\n")
+                        out.append("سابقه تراکنش‌ها کامل خوانده نشد: $historyMessage\n")
                     }
                     out.append("\nارزیابی امکان بازیابی:\n")
                     val ownerKeys = owner?.optJSONArray("keys") ?: JSONArray()
