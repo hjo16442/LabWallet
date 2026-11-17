@@ -1,7 +1,6 @@
 package com.lab.wallet.offline
 
 import org.bouncycastle.asn1.sec.SECNamedCurves
-import org.bouncycastle.crypto.params.ECDomainParameters
 import org.bouncycastle.crypto.digests.KeccakDigest
 import java.io.InputStream
 import java.math.BigInteger
@@ -15,7 +14,6 @@ import java.text.Normalizer
 internal object TronDeriver {
     private data class ExtendedKey(val key: BigInteger, val chain: ByteArray)
     private val curveParams = SECNamedCurves.getByName("secp256k1")
-    private val domain = ECDomainParameters(curveParams.curve, curveParams.g, curveParams.n, curveParams.h)
     private val order = curveParams.n
     private val alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
@@ -26,9 +24,7 @@ internal object TronDeriver {
         val indexes = words.map { wordList.indexOf(it.lowercase()) }
         if (indexes.any { it < 0 }) return "حداقل یک کلمه در فهرست رسمی BIP39 انگلیسی پیدا نشد."
         if (!validChecksum(indexes)) return "چک‌سام BIP39 معتبر نیست؛ ترتیب یا املای کلمات را بررسی کن."
-        val normalized = Normalizer.normalize(words.joinToString(" "), Normalizer.Form.NFKD)
-        val passphrase = Normalizer.normalize(passphraseInput, Normalizer.Form.NFKD)
-        val seed = pbkdf2(normalized.toByteArray(Charsets.UTF_8), ("mnemonic" + passphrase).toByteArray(Charsets.UTF_8), 2048, 64)
+        val seed = mnemonicSeed(words, passphraseInput)
         val wanted = wantedInput.trim()
         val found = mutableListOf<String>()
         val checked = mutableListOf<String>()
@@ -67,6 +63,12 @@ internal object TronDeriver {
             append("\n\nآدرس‌های مشتق‌شده (فقط عمومی):\n")
             checked.forEach { append(it).append("\n") }
         }
+    }
+
+    internal fun mnemonicSeed(words: List<String>, passphraseInput: String): ByteArray {
+        val normalized = Normalizer.normalize(words.joinToString(" "), Normalizer.Form.NFKD)
+        val passphrase = Normalizer.normalize(passphraseInput, Normalizer.Form.NFKD)
+        return pbkdf2(normalized.toByteArray(Charsets.UTF_8), ("mnemonic" + passphrase).toByteArray(Charsets.UTF_8), 2048, 64)
     }
 
     private fun loadWords(stream: InputStream): List<String> {
