@@ -127,11 +127,96 @@ jobs:
           PY
           python audit.py
 
+
+      - name: Scan complete account permission-update history
+        run: |
+          cat > history.py <<'PY'
+          import hashlib, json, sys, requests
+          from coincurve import PublicKey
+          from Crypto.Hash import keccak
+
+          ACCOUNT = "TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH"
+          URL = "https://api.trongrid.io/v1/accounts/" + ACCOUNT + "/transactions"
+          ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+          def b58check(payload):
+              checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+              n = int.from_bytes(payload + checksum, "big")
+              out = ""
+              while n:
+                  n, r = divmod(n, 58)
+                  out = ALPHABET[r] + out
+              pad = len(payload + checksum) - len((payload + checksum).lstrip(bytes([0])))
+              return "1" * pad + (out or "1")
+
+          def tron_address(pubkey):
+              raw = pubkey.format(compressed=False)[1:]
+              h = keccak.new(digest_bits=256)
+              h.update(raw)
+              return b58check(bytes([0x41]) + h.digest()[-20:])
+
+          params = {"only_confirmed":"true", "limit":200,
+                    "order_by":"block_timestamp,asc", "visible":"true"}
+          seen = set()
+          updates = []
+          for page in range(100):
+              response = requests.get(URL, params=params, timeout=40)
+              response.raise_for_status()
+              payload = response.json()
+              for tx in payload.get("data", []):
+                  txid = tx.get("txID") or tx.get("txid")
+                  if not txid or txid in seen:
+                      continue
+                  seen.add(txid)
+                  contracts = tx.get("raw_data", {}).get("contract", [])
+                  for contract in contracts:
+                      if contract.get("type") != "AccountPermissionUpdateContract":
+                          continue
+                      value = contract.get("parameter", {}).get("value", {})
+                      updates.append((tx, value))
+              fingerprint = payload.get("meta", {}).get("fingerprint")
+              if not fingerprint:
+                  break
+              params["fingerprint"] = fingerprint
+          lines = ["PERMISSION UPDATE HISTORY FOR " + ACCOUNT,
+                   "Transactions scanned: " + str(len(seen)),
+                   "Permission updates found: " + str(len(updates)), ""]
+          for tx, value in updates:
+              txid = tx.get("txID") or tx.get("txid")
+              lines.append("TXID: " + str(txid))
+              lines.append("Block: " + str(tx.get("block") or tx.get("blockNumber")))
+              lines.append("Timestamp: " + str(tx.get("block_timestamp")))
+              lines.append("Owner address: " + str(value.get("owner_address")))
+              if "owner" in value:
+                  lines.append("New Owner: " + json.dumps(value["owner"], ensure_ascii=False))
+              if "actives" in value:
+                  lines.append("New Active: " + json.dumps(value["actives"], ensure_ascii=False))
+              for i, sighex in enumerate(tx.get("signature", [])):
+                  try:
+                      sig = bytes.fromhex(sighex)
+                      recid = sig[64] - 27 if sig[64] >= 27 else sig[64]
+                      pub = PublicKey.from_signature_and_message(
+                          sig[:64] + bytes([recid]), bytes.fromhex(txid), hasher=None)
+                      lines.append("Recovered signer " + str(i+1) + ": " + tron_address(pub))
+                  except Exception as e:
+                      lines.append("Signer recovery error: " + str(e))
+              lines.append("")
+          report = chr(10).join(lines)
+          print(report)
+          with open("tron-permission-history.txt", "w", encoding="utf-8") as f:
+              f.write(report + chr(10))
+          if not updates:
+              print("No permission updates returned; verify API history pagination.")
+          PY
+          python history.py
+
       - name: Upload public audit report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: tron-permission-signer-audit
-          path: tron-permission-audit.txt
+          path: |
+            tron-permission-audit.txt
+            tron-permission-history.txt
           if-no-files-found: warn
           retention-days: 7
