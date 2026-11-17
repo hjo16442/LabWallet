@@ -38,35 +38,24 @@ internal object TronDeriver {
             val coin = deriveChild(purpose, 195L or HARDENED)
             purpose.chain.fill(0)
 
-            // Accounts 0..20, external chain 0, address indexes 0..100.
+            // Check both external (0) and internal/change (1) chains
+            // for accounts 0..20 and address indexes 0..100.
             for (accountIndex in 0L..20L) {
                 val account = deriveChild(coin, accountIndex or HARDENED)
-                val external = deriveChild(account, 0L)
-                for (index in 0L..100L) {
-                    val child = deriveChild(external, index)
-                    val path = "m/44'/195'/$accountIndex'/0/$index"
-                    val address = tronAddress(child.key)
-                    checked.add(path)
-                    if (address == wanted) found.add(path)
-                    child.chain.fill(0)
+                for (change in 0L..1L) {
+                    val branch = deriveChild(account, change)
+                    for (index in 0L..100L) {
+                        val child = deriveChild(branch, index)
+                        val path = "m/44'/195'/$accountIndex'/$change/$index"
+                        val address = tronAddress(child.key)
+                        checked.add(path)
+                        if (address == wanted) found.add(path)
+                        child.chain.fill(0)
+                    }
+                    branch.chain.fill(0)
                 }
-                external.chain.fill(0)
                 account.chain.fill(0)
             }
-
-            // Also check internal/change chain 1 for account 0.
-            val accountZero = deriveChild(coin, HARDENED)
-            val internal = deriveChild(accountZero, 1L)
-            for (index in 0L..100L) {
-                val child = deriveChild(internal, index)
-                val path = "m/44'/195'/0'/1/$index"
-                val address = tronAddress(child.key)
-                checked.add(path)
-                if (address == wanted) found.add(path)
-                child.chain.fill(0)
-            }
-            internal.chain.fill(0)
-            accountZero.chain.fill(0)
             coin.chain.fill(0)
         } finally {
             seed.fill(0)
@@ -82,7 +71,7 @@ internal object TronDeriver {
                 append("این نتیجه به معنی امکان برداشت قطعی نیست؛ امضای تراکنش و وضعیت مجوز روی زنجیره باید جداگانه بررسی شود.")
             } else {
                 append("در مسیرهای بررسی‌شده تطبیقی پیدا نشد.\n")
-                append("ممکن است Passphrase متفاوت، مسیر مشتق‌سازی دیگر یا index بالاتر استفاده شده باشد.")
+                append("در مسیرهای استاندارد بررسی‌شده تطبیقی نبود. اگر هنگام ساخت کیف پول BIP39 Passphrase تعیین شده باشد، باید مقدار دقیق آن را فقط روی همین گوشی وارد کنی. این برنامه عبارت‌های بازیابی ناشناخته را حدس نمی‌زند.")
             }
             append("\n\nآدرس‌های مشتق‌شده (فقط عمومی):\n")
             checked.forEach { append(it).append("\n") }
