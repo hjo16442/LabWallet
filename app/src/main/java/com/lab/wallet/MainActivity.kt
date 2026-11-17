@@ -577,7 +577,8 @@ class MainActivity : Activity() {
                         }
                         if (updates == 0) out.append("در ۲۰۰ تراکنش تأییدشده اخیر، تغییر مجوز پیدا نشد؛ تغییر قدیمی‌تر رد نمی‌شود.\n")
                     } catch (historyError: Exception) {
-                        out.append("سابقه تراکنش‌ها خوانده نشد: \${historyError.message ?: "خطای API"}\n")
+                        val historyMessage = historyError.message ?: "API error"
+                        out.append("سابقه تراکنش‌ها خوانده نشد: $historyMessage\n")
                     }
                     out.append("\nارزیابی امکان بازیابی:\n")
                     val ownerKeys = owner?.optJSONArray("keys") ?: JSONArray()
@@ -598,7 +599,8 @@ class MainActivity : Activity() {
                     out.toString()
                 }
             } catch (e: Exception) {
-                "بررسی TRON ناموفق بود: \${e.message ?: "خطای ارتباط یا محدودیت API"}\nموجودی صفر فرض نشده و هیچ تغییری در کیف پول ایجاد نشده است."
+                val errorMessage = e.message ?: "Network or API error"
+                "بررسی TRON ناموفق بود: $errorMessage\nموجودی صفر فرض نشده و هیچ تغییری در کیف پول ایجاد نشده است."
             }
             runOnUiThread { result.text = report; checkButton.isEnabled = true }
         }
