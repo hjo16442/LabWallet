@@ -551,7 +551,7 @@ class MainActivity : Activity() {
                     } else {
                         for (i in 0 until actives.length()) {
                             val p = actives.optJSONObject(i) ?: continue
-                            appendTronPermission(out, "Active #\${p.optInt("id", i + 2)}", p, wallet, true)
+                            appendTronPermission(out, "Active #${p.optInt("id", i + 2)}", p, wallet, true)
                         }
                     }
                     val witness = account.optJSONObject("witness_permission")
@@ -565,7 +565,7 @@ class MainActivity : Activity() {
                     out.toString()
                 }
             } catch (e: Exception) {
-                "خواندن مجوزهای TRON ناموفق بود: \${e.message ?: "خطای ارتباط یا محدودیت API"}\nموجودی صفر فرض نشده و هیچ تغییری در کیف پول ایجاد نشده است."
+                "خواندن مجوزهای TRON ناموفق بود: ${e.message ?: "خطای ارتباط یا محدودیت API"}\nموجودی صفر فرض نشده و هیچ تغییری در کیف پول ایجاد نشده است."
             }
             runOnUiThread { result.text = report; checkButton.isEnabled = true }
         }
@@ -582,7 +582,7 @@ class MainActivity : Activity() {
             val weight = key.optLong("weight", 0L)
             val isOurs = signer.equals(wallet, true)
             if (isOurs) ownWeight += weight
-            keyLines.append("\n  • $signer | وزن: $weight\${if (isOurs) "  ← آدرس حساب شما" else ""}")
+            keyLines.append("\n  • $signer | وزن: $weight${if (isOurs) "  ← آدرس حساب شما" else ""}")
         }
         out.append("\n$label — حد نصاب: $threshold")
         out.append("\nوزن آدرس حساب شما: $ownWeight")
@@ -593,7 +593,7 @@ class MainActivity : Activity() {
         }
         out.append("\nکلیدهای ثبت‌شده:$keyLines")
         if (active) {
-            out.append("\nمحدوده عملیات (operations): \${permission.optString("operations", "در پاسخ موجود نیست")}")
+            out.append("\nمحدوده عملیات (operations): ${permission.optString("operations", "در پاسخ موجود نیست")}")
         }
         out.append("\n")
     }
