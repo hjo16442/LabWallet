@@ -1,0 +1,137 @@
+name: TRON Permission Signer Audit
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/tron-permission-audit.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install signature recovery libraries
+        run: pip install coincurve pycryptodome requests
+
+      - name: Fetch TRON mainnet transactions and recover signers
+        run: |
+          cat > audit.py <<'PY'
+          import hashlib, json, sys, time
+          import requests
+          from coincurve import PublicKey
+          from Crypto.Hash import keccak
+
+          TXS = [
+              "66cf701e605ba0bd67fcf1625342fab342f134a5dda91e9c726c4e5b18d96d8b",
+              "c6790f956cea97f6884d1823b769fef8fc4318b7d814de23a91b27e29150b4e1",
+          ]
+          ENDPOINTS = [
+              "https://api.trongrid.io/wallet/gettransactionbyid",
+              "https://tron-mainnet.nodit.io/wallet/gettransactionbyid",
+          ]
+
+          ALPHABET = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+
+          def b58check(payload):
+              checksum = hashlib.sha256(hashlib.sha256(payload).digest()).digest()[:4]
+              n = int.from_bytes(payload + checksum, "big")
+              out = ""
+              while n:
+                  n, r = divmod(n, 58)
+                  out = ALPHABET[r] + out
+              pad = len(payload + checksum) - len((payload + checksum).lstrip(b"\\x00"))
+              return "1" * pad + (out or "1")
+
+          def tron_address(pubkey):
+              raw = pubkey.format(compressed=False)[1:]
+              h = keccak.new(digest_bits=256)
+              h.update(raw)
+              return b58check(b"\\x41" + h.digest()[-20:])
+
+          def get_tx(txid):
+              errors = []
+              for endpoint in ENDPOINTS:
+                  try:
+                      r = requests.post(endpoint, json={"value": txid, "visible": True},
+                                        headers={"accept":"application/json"},
+                                        timeout=25)
+                      if r.ok:
+                          data = r.json()
+                          if data.get("txID") == txid and data.get("signature"):
+                              return data, endpoint
+                          errors.append(endpoint + ": " + str(data.get("Error") or "empty/no signature"))
+                      else:
+                          errors.append(endpoint + ": HTTP " + str(r.status_code))
+                  except Exception as e:
+                      errors.append(endpoint + ": " + repr(e))
+              raise RuntimeError("; ".join(errors))
+
+          lines = ["TRON MAINNET PERMISSION TRANSACTION SIGNER AUDIT", ""]
+          ok = True
+          for txid in TXS:
+              lines.append("TXID: " + txid)
+              try:
+                  tx, source = get_tx(txid)
+                  raw_hash = bytes.fromhex(txid)
+                  lines.append("Source: " + source)
+                  lines.append("Signature count: " + str(len(tx["signature"])))
+                  contracts = tx.get("raw_data", {}).get("contract", [])
+                  for c in contracts:
+                      lines.append("Contract: " + str(c.get("type")))
+                      val = c.get("parameter", {}).get("value", {})
+                      if val.get("owner_address"):
+                          lines.append("Contract owner: " + str(val["owner_address"]))
+                      if "owner" in val:
+                          lines.append("New owner permission: " + json.dumps(val["owner"], ensure_ascii=False))
+                      if "actives" in val:
+                          lines.append("New active permissions: " + json.dumps(val["actives"], ensure_ascii=False))
+                  for i, sighex in enumerate(tx["signature"]):
+                      sig = bytes.fromhex(sighex)
+                      if len(sig) != 65:
+                          lines.append(f"Signer {i+1}: invalid signature length {len(sig)}")
+                          ok = False
+                          continue
+                      recid = sig[64]
+                      if recid >= 27:
+                          recid -= 27
+                      if recid not in (0,1,2,3):
+                          lines.append(f"Signer {i+1}: unsupported recovery id {sig[64]}")
+                          ok = False
+                          continue
+                      try:
+                          pub = PublicKey.from_signature_and_message(
+                              sig[:64] + bytes([recid]), raw_hash, hasher=None)
+                          lines.append(f"Recovered signer {i+1}: {tron_address(pub)}")
+                      except Exception as e:
+                          lines.append(f"Signer {i+1}: recovery failed: {e}")
+                          ok = False
+              except Exception as e:
+                  lines.append("FETCH/RECOVERY ERROR: " + str(e))
+                  ok = False
+              lines.append("")
+          report = "\\n".join(lines)
+          print(report)
+          with open("tron-permission-audit.txt", "w", encoding="utf-8") as f:
+              f.write(report + "\\n")
+          if not ok:
+              sys.exit(1)
+          PY
+          python audit.py
+
+      - name: Upload public audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tron-permission-signer-audit
+          path: tron-permission-audit.txt
+          if-no-files-found: warn
+          retention-days: 7
