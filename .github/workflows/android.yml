@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Test and build Android APKs
     runs-on: ubuntu-latest
 
     steps:
@@ -32,13 +32,27 @@ jobs:
         with:
           gradle-version: '8.9'
 
-      - name: Build APK
+      - name: Run offline BIP39 test vectors
+        run: gradle :offline:testDebugUnitTest --no-daemon --stacktrace
+
+      - name: Build existing online diagnostic app
         run: gradle :app:assembleDebug --no-daemon --stacktrace
 
-      - name: Upload debug APK
+      - name: Build isolated offline key-check app
+        run: gradle :offline:assembleDebug --no-daemon --stacktrace
+
+      - name: Upload existing LabWallet APK
         uses: actions/upload-artifact@v4
         with:
           name: LabWallet-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload offline key-check APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LabWallet-Offline-TRON-Check
+          path: offline/build/outputs/apk/debug/*.apk
           if-no-files-found: error
           retention-days: 7
