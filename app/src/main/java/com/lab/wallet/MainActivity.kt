@@ -95,6 +95,7 @@ class MainActivity : Activity() {
         checkButton = button("شروع بررسی موجودی و شبکه") { checkAddress() }; root.addView(checkButton)
         root.addView(button("شناسایی خودکار توکن در شبکه‌های EVM") { autoIdentifyEvmToken() })
         root.addView(button("شبیه‌سازی امن انتقال توکن (بدون ارسال)") { simulateEvmTokenTransfer() })
+        root.addView(button("بررسی مالک و اختیارات قرارداد (EVM)") { analyzeContractOwner() })
         root.addView(button("بررسی آمادگی برداشت و راه‌حل خطا") { diagnoseWithdrawal() })
         root.addView(button("باز کردن مستقیم Trust Wallet") { openTrustWallet() })
         root.addView(heading("گزارش بررسی"))
@@ -270,6 +271,89 @@ class MainActivity : Activity() {
             runOnUiThread { result.text = report; checkButton.isEnabled = true }
         }
     }
+
+    private fun analyzeContractOwner() {
+        val index = network.selectedItemPosition
+        val contract = tokenContract.text.toString().trim()
+        val wallet = address.text.toString().trim()
+        if (index !in 2..8 && index != 11) {
+            result.text = "بررسی مالک فعلاً برای قراردادهای EVM فعال است؛ شبکه‌های TRON و Solana نیازمند تحلیل‌گر جداگانه هستند."
+            return
+        }
+        if (!contract.matches(Regex("^0x[0-9a-fA-F]{40}$"))) {
+            result.text = "آدرس قرارداد معتبر EVM را وارد کن."
+            return
+        }
+        if (wallet.isNotBlank() && !wallet.matches(Regex("^0x[0-9a-fA-F]{40}$"))) {
+            result.text = "آدرس کیف پول واردشده معتبر نیست؛ برای بررسی وضعیت blacklist احتمالی، آدرس عمومی معتبر لازم است."
+            return
+        }
+        val url = if (index == 11) customRpc.text.toString().trim() else rpcByIndex[index] ?: ""
+        if (!url.startsWith("https://")) {
+            result.text = "RPC معتبر HTTPS برای شبکه انتخابی در دسترس نیست."
+            return
+        }
+        checkButton.isEnabled = false
+        result.text = "در حال تحلیل مالک و قابلیت‌های مدیریتی قرارداد؛ فقط‌خواندنی…"
+        executor.execute {
+            val report = try {
+                val expectedIds = mapOf(2 to "1", 3 to "56", 4 to "137", 5 to "42161", 6 to "10", 7 to "8453", 8 to "43114")
+                val chainHex = rpc(url, "eth_chainId", JSONArray()).optString("result")
+                val actualId = BigInteger(chainHex.removePrefix("0x").ifBlank { "0" }, 16).toString()
+                val expectedId = expectedIds[index]
+                if (expectedId != null && actualId != expectedId) {
+                    throw IllegalStateException("Chain ID پاسخ RPC با شبکه انتخابی تطابق ندارد.")
+                }
+                val code = rpc(url, "eth_getCode", JSONArray().put(contract).put("latest")).optString("result")
+                if (code.isBlank() || code == "0x" || code == "0x0") {
+                    throw IllegalStateException("در این آدرس روی شبکه انتخابی قرارداد مستقر نیست.")
+                }
+                val out = StringBuilder("گزارش تحلیل مالک قرارداد\nشبکه: ${networks[index]} — Chain ID: $actualId\nقرارداد: $contract\n")
+                var ownerFound = false
+                try {
+                    val ownerHex = ethCall(url, contract, "0x8da5cb5b").removePrefix("0x")
+                    if (ownerHex.length >= 64) {
+                        val owner = "0x" + ownerHex.takeLast(40)
+                        ownerFound = true
+                        if (owner.equals("0x0000000000000000000000000000000000000000", true)) {
+                            out.append("\nمالک گزارش‌شده: آدرس صفر (ممکن است مالکیت واگذار/لغو شده باشد؛ به‌تنهایی اثبات قطعی نیست).")
+                        } else {
+                            out.append("\nمالک فعلی طبق owner(): $owner")
+                            if (wallet.isNotBlank()) out.append(if (owner.equals(wallet, true)) "\nآدرس کیف پول واردشده با مالک قرارداد یکسان است." else "\nآدرس کیف پول واردشده مالک قرارداد نیست.")
+                        }
+                    } else {
+                        out.append("\nتابع owner() پاسخ قابل‌تفسیر نداد.")
+                    }
+                } catch (_: Exception) {
+                    out.append("\nتابع استاندارد owner() پشتیبانی نشد یا فراخوانی آن ناموفق بود.")
+                }
+                try {
+                    val pausedHex = ethCall(url, contract, "0x5c975abb").removePrefix("0x")
+                    val paused = BigInteger(pausedHex.ifBlank { "0" }, 16) != BigInteger.ZERO
+                    out.append(if (paused) "\nوضعیت paused(): فعال — قرارداد اعلام می‌کند انتقال‌ها ممکن است متوقف باشند." else "\nوضعیت paused(): غیرفعال — تابع paused() مقدار false برگرداند.")
+                } catch (_: Exception) {
+                    out.append("\nوضعیت توقف: تابع استاندارد paused() در این قرارداد قابل‌خواندن نبود؛ این به معنی نبود قابلیت توقف نیست.")
+                }
+                val lowerCode = code.lowercase()
+                val hasTransferOwnership = lowerCode.contains("f2fde38b")
+                val hasRenounceOwnership = lowerCode.contains("715018a6")
+                out.append("\n\nنشانه‌های بایت‌کد (فقط قرینه، نه اثبات):")
+                out.append(if (hasTransferOwnership) "\n• selector مربوط به transferOwnership(address) دیده شد." else "\n• selector شناخته‌شده transferOwnership(address) در بایت‌کد خام پیدا نشد.")
+                out.append(if (hasRenounceOwnership) "\n• selector مربوط به renounceOwnership() دیده شد." else "\n• selector شناخته‌شده renounceOwnership() در بایت‌کد خام پیدا نشد.")
+                out.append("\n• وجود selector به معنی قابل‌فراخوانی بودن برای همه نیست؛ معمولاً دسترسی مالک/نقش لازم است.")
+                out.append("\n\nمحدودیت‌های مهم:")
+                out.append("\n• قراردادهای Proxy ممکن است منطق مالکیت را در Implementation یا Admin جداگانه نگه دارند؛ این بررسی به‌تنهایی مالک Proxy را تعیین نمی‌کند.")
+                out.append("\n• نبود owner() به معنی renounce شدن مالکیت نیست؛ قرارداد ممکن است Ownable نباشد یا از AccessControl استفاده کند.")
+                out.append("\n• blacklist، نقش‌های ادمین، تغییر مالیات و محدودیت انتقال در هر قرارداد روش متفاوتی دارند و هنوز به‌صورت عمومی و قطعی قابل تشخیص نیستند.")
+                out.append("\n• این گزارش فقط‌خواندنی است؛ هیچ تراکنشی ارسال نشده است.")
+                out.toString()
+            } catch (e: Exception) {
+                "تحلیل قرارداد ناموفق بود: ${e.message ?: "خطای RPC"}\nشبکه، قرارداد و RPC را بررسی کن. خطای خواندن به معنی امن یا ناامن بودن قرارداد نیست."
+            }
+            runOnUiThread { result.text = report; checkButton.isEnabled = true }
+        }
+    }
+
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
 
     private fun checkAddress() {
