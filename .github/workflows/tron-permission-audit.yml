@@ -48,14 +48,14 @@ jobs:
               while n:
                   n, r = divmod(n, 58)
                   out = ALPHABET[r] + out
-              pad = len(payload + checksum) - len((payload + checksum).lstrip(b"\\x00"))
+              pad = len(payload + checksum) - len((payload + checksum).lstrip(bytes([0])))
               return "1" * pad + (out or "1")
 
           def tron_address(pubkey):
               raw = pubkey.format(compressed=False)[1:]
               h = keccak.new(digest_bits=256)
               h.update(raw)
-              return b58check(b"\\x41" + h.digest()[-20:])
+              return b58check(bytes([0x41]) + h.digest()[-20:])
 
           def get_tx(txid):
               errors = []
@@ -118,10 +118,10 @@ jobs:
                   lines.append("FETCH/RECOVERY ERROR: " + str(e))
                   ok = False
               lines.append("")
-          report = "\\n".join(lines)
+          report = chr(10).join(lines)
           print(report)
           with open("tron-permission-audit.txt", "w", encoding="utf-8") as f:
-              f.write(report + "\\n")
+              f.write(report + chr(10))
           if not ok:
               sys.exit(1)
           PY
