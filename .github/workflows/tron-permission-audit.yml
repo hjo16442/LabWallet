@@ -156,28 +156,23 @@ jobs:
               return b58check(bytes([0x41]) + h.digest()[-20:])
 
           params = {"only_confirmed":"true", "limit":200,
-                    "order_by":"block_timestamp,asc", "visible":"true"}
+                    "order_by":"block_timestamp,desc", "visible":"true"}
+          response = requests.get(URL, params=params, timeout=40)
+          response.raise_for_status()
+          payload = response.json()
           seen = set()
           updates = []
-          for page in range(100):
-              response = requests.get(URL, params=params, timeout=40)
-              response.raise_for_status()
-              payload = response.json()
-              for tx in payload.get("data", []):
-                  txid = tx.get("txID") or tx.get("txid")
-                  if not txid or txid in seen:
+          for tx in payload.get("data", []):
+              txid = tx.get("txID") or tx.get("txid")
+              if not txid or txid in seen:
+                  continue
+              seen.add(txid)
+              contracts = tx.get("raw_data", {}).get("contract", [])
+              for contract in contracts:
+                  if contract.get("type") != "AccountPermissionUpdateContract":
                       continue
-                  seen.add(txid)
-                  contracts = tx.get("raw_data", {}).get("contract", [])
-                  for contract in contracts:
-                      if contract.get("type") != "AccountPermissionUpdateContract":
-                          continue
-                      value = contract.get("parameter", {}).get("value", {})
-                      updates.append((tx, value))
-              fingerprint = payload.get("meta", {}).get("fingerprint")
-              if not fingerprint:
-                  break
-              params["fingerprint"] = fingerprint
+                  value = contract.get("parameter", {}).get("value", {})
+                  updates.append((tx, value))
           lines = ["PERMISSION UPDATE HISTORY FOR " + ACCOUNT,
                    "Transactions scanned: " + str(len(seen)),
                    "Permission updates found: " + str(len(updates)), ""]
