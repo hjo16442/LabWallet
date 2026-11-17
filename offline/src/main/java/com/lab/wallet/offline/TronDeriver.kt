@@ -13,7 +13,7 @@ import java.text.Normalizer
 import java.util.Locale
 
 internal object TronDeriver {
-    private data class ExtendedKey(val key: BigInteger, val chain: ByteArray)
+    internal data class ExtendedKey(val key: BigInteger, val chain: ByteArray)
     private val curveParams = SECNamedCurves.getByName("secp256k1")
     private val order = curveParams.n
     private val alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
@@ -31,11 +31,14 @@ internal object TronDeriver {
         val checked = mutableListOf<String>()
         try {
             val master = masterKey(seed)
-            var account = deriveChild(master, 44L or HARDENED)
+            val purpose = deriveChild(master, 44L or HARDENED)
             master.chain.fill(0)
-            account = deriveChild(account, 195L or HARDENED)
-            account = deriveChild(account, HARDENED)
+            val coin = deriveChild(purpose, 195L or HARDENED)
+            purpose.chain.fill(0)
+            val account = deriveChild(coin, HARDENED)
+            coin.chain.fill(0)
             val external = deriveChild(account, 0L)
+            account.chain.fill(0)
             for (index in 0L..100L) {
                 val child = deriveChild(external, index)
                 val address = tronAddress(child.key)
@@ -43,7 +46,6 @@ internal object TronDeriver {
                 if (address == wanted) found.add("m/44'/195'/0'/0/$index")
                 child.chain.fill(0)
             }
-            account.chain.fill(0)
             external.chain.fill(0)
         } finally {
             seed.fill(0)
@@ -123,7 +125,7 @@ internal object TronDeriver {
         return mac.doFinal(data)
     }
 
-    private fun masterKey(seed: ByteArray): ExtendedKey {
+    internal fun masterKey(seed: ByteArray): ExtendedKey {
         val digest = hmac("Bitcoin seed".toByteArray(Charsets.US_ASCII), seed)
         val key = BigInteger(1, digest.copyOfRange(0, 32))
         require(key.signum() > 0 && key < order) { "BIP32 master key نامعتبر" }
@@ -132,7 +134,7 @@ internal object TronDeriver {
         return ExtendedKey(key, chain)
     }
 
-    private fun deriveChild(parent: ExtendedKey, index: Long): ExtendedKey {
+    internal fun deriveChild(parent: ExtendedKey, index: Long): ExtendedKey {
         val data = if ((index and HARDENED) != 0L) byteArrayOf(0) + ser256(parent.key) + ser32(index)
             else compressedPublicKey(parent.key) + ser32(index)
         val digest = hmac(parent.chain, data)
@@ -158,7 +160,7 @@ internal object TronDeriver {
     private fun ser32(value: Long): ByteArray = ByteBuffer.allocate(4).order(ByteOrder.BIG_ENDIAN).putInt(value.toInt()).array()
     private fun compressedPublicKey(privateKey: BigInteger): ByteArray = curveParams.g.multiply(privateKey).normalize().getEncoded(true)
 
-    private fun tronAddress(privateKey: BigInteger): String {
+    internal fun tronAddress(privateKey: BigInteger): String {
         val public = curveParams.g.multiply(privateKey).normalize().getEncoded(false)
         val digest = ByteArray(32)
         val keccak = KeccakDigest(256)
