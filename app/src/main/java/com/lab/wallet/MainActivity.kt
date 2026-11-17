@@ -551,7 +551,8 @@ class MainActivity : Activity() {
                     } else {
                         for (i in 0 until actives.length()) {
                             val p = actives.optJSONObject(i) ?: continue
-                            appendTronPermission(out, "Active #\${p.optInt("id", i + 2)}", p, wallet, true)
+                            val activeId = p.optInt("id", i + 2)
+                            appendTronPermission(out, "Active #$activeId", p, wallet, true)
                         }
                     }
                     out.append("\nسابقه تغییر مجوز:\n")
