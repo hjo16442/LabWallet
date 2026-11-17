@@ -10,6 +10,7 @@ import java.security.MessageDigest
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 import java.text.Normalizer
+import java.util.Locale
 
 internal object TronDeriver {
     private data class ExtendedKey(val key: BigInteger, val chain: ByteArray)
@@ -18,7 +19,7 @@ internal object TronDeriver {
     private val alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 
     fun check(mnemonicInput: String, passphraseInput: String, wantedInput: String, wordStream: InputStream): String {
-        val words = mnemonicInput.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        val words = mnemonicInput.trim().split(Regex("\\s+")).filter { it.isNotBlank() }.map { it.lowercase(Locale.ROOT) }
         if (words.size != 12 && words.size != 24) return "عبارت باید دقیقاً ۱۲ یا ۲۴ کلمه انگلیسی باشد."
         val wordList = loadWords(wordStream)
         val indexes = words.map { wordList.indexOf(it.lowercase()) }
@@ -35,7 +36,7 @@ internal object TronDeriver {
             account = deriveChild(account, 195L or HARDENED)
             account = deriveChild(account, HARDENED)
             val external = deriveChild(account, 0L)
-            for (index in 0L..20L) {
+            for (index in 0L..100L) {
                 val child = deriveChild(external, index)
                 val address = tronAddress(child.key)
                 checked.add("m/44'/195'/0'/0/$index  →  $address")
@@ -50,7 +51,7 @@ internal object TronDeriver {
         return buildString {
             append("بررسی آفلاین پایان یافت.\n")
             append("اعتبار BIP39: تأیید شد (${words.size} کلمه)\n")
-            append("مسیرهای بررسی‌شده: ۲۱ مسیر استاندارد TRON، از index صفر تا ۲۰\n")
+            append("مسیرهای بررسی‌شده: ۱۰۱ مسیر استاندارد TRON، از index صفر تا ۱۰۰\n")
             append("آدرس هدف: ").append(wanted).append("\n\n")
             if (found.isNotEmpty()) {
                 append("تطبیق پیدا شد؛ عبارت واردشده این آدرس را تولید می‌کند.\n")
